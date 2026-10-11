@@ -1,12 +1,16 @@
 const express = require("express");
 const cors = require("cors");
+const http = require("http");
+const {Server} = require("socket.io");
 
 const app = express();
+const httpServer = http.createServer(app);
+const io = new Server(httpServer, {cors: {origin: "*"}})
 
-app.use(cors());
+require("./sockets/gameSockets")(io);
+
 app.use(express.json());
-app.use("/", require("./routes/gameLogic"));
 
-app.listen(3000, ()=>{
-     console.log("Server is running on 3000")
+httpServer.listen(3000, ()=>{
+       console.log("Server running on 3000");
 })
