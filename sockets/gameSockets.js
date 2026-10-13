@@ -1,6 +1,5 @@
 const {Chess} = require("chess.js");
 const crypto = require("crypto");
-const game = new Chess();
 
 const games = new Map();
 const playerGame = new Map();
