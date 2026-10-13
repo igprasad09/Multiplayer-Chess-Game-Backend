@@ -2,13 +2,13 @@ const express = require("express");
 const cors = require("cors");
 const http = require("http");
 const {Server} = require("socket.io");
-const authRoutes = require("./routes/auth");
+const authRoutes = require("./src/routes/auth");
 
 const app = express();
 const httpServer = http.createServer(app);
 const io = new Server(httpServer, {cors: {origin: "*"}})
 
-require("./sockets/gameSockets")(io);
+require("./src/sockets/gameSockets")(io);
 
 app.use(express.json());
 
