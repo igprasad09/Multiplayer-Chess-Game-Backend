@@ -67,6 +67,7 @@ routes.post("/login", authMiddleware, async(req, res)=>{
         return res.json({
             success: true,
             message: "Login Successful",
+            username: user.username,
             token
         });
         
@@ -125,6 +126,7 @@ routes.post("/signup", async (req, res)=>{
             return res.json({
                 success: true,
                 user: newUser,
+                username: newUser.username,
                 message: "New User Created Successfully",
                 token
             });
@@ -153,6 +155,7 @@ routes.post("/signup", async (req, res)=>{
                  return res.json({
                     success: true,
                     message: "Login Success",
+                    username: user.username,
                     token
                 });
 
@@ -170,6 +173,16 @@ routes.post("/signup", async (req, res)=>{
             message: "Internal server error",
         });
     }
+});
+
+routes.post("/logout", (req, res)=>{
+    res.clearCookie("token");
+    
+    return res.json({
+        success: true,
+        message: "Logout successful",
+        relogin: true
+    })
 })
 
 module.exports = routes;
