@@ -19,7 +19,8 @@ async function authMiddleware(req, res, next){
                 success: true,
                 message: "Login Success",
                 user: decoded,
-                username: decoded.username
+                username: decoded.username,
+                token
             });
 
         } catch (err) {
