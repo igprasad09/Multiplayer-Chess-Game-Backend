@@ -4,6 +4,7 @@ const http = require("http");
 const {Server} = require("socket.io");
 const authRoutes = require("./src/routes/auth");
 const cookiParser = require("cookie-parser");
+const friendRoutes = require("./src/routes/friends");
 
 const app = express();
 const httpServer = http.createServer(app);
@@ -19,6 +20,7 @@ app.use(cors({
 }));
 
 app.use("/auth", authRoutes);
+app.use("/api", friendRoutes);
 
 httpServer.listen(3000, ()=>{
        console.log("Server running on 3000");
