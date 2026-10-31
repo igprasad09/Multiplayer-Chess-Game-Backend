@@ -6,9 +6,31 @@ datasource db {
   provider = "postgresql"
 }
 
+enum FriendStatus {
+   PENDING
+   ACCEPTED
+   REJECTED
+}
+
 model User {
     id Int @id @default(autoincrement())
     username String @unique
     password String
     createdAt DateTime @default(now())
+
+    sendRequests Friend[] @relation("SendRequests")
+    receivedRequests Friend[] @relation("ReceivedRequests")
+}
+
+model Friend {
+   id Int @id @default(autoincrement())
+   senderId Int
+   receiverId Int
+   status FriendStatus @default(PENDING)
+
+   sender User @relation("SendRequests", fields: [senderId], references: [id])
+   receiver   User @relation("ReceivedRequests", fields: [receiverId], references: [id])
+
+   createdAt  DateTime @default(now())
+   @@unique([senderId, receiverId])
 }
