@@ -2,47 +2,74 @@
 const { Chess } = require("chess.js");
 const crypto = require("crypto");
 
-const games = new Map(); // gameId -> chess game and players
-const userGame = new Map(); // userId -> gameId
-let pendingPlayer = null; // player waiting for an opponent
+const games = new Map();
+const userGame = new Map();
+const onlineUsers = new Map();
+
+let pendingPlayer = null;
 
 module.exports = (io) => {
 
     io.on("connection", (socket) => {
 
-        const userId = socket.data.userId;
+        const userId = String(socket.data.userId);
         const username = socket.data.username;
+
         const room = `user_${userId}`;
 
-        // 1. Join personal room
+        // Join personal room
         socket.join(room);
 
+        onlineUsers.set(userId, username);
 
-        // 2. Restore existing game after reconnecting
+        console.log(username, "connected");
+
+
+        // 1. Restore existing game
+
         const gameId = userGame.get(userId);
         const game = games.get(gameId);
 
         if (game) {
-            const isWhite = game.white === userId;
+
+            let color = "white";
+            let opponentUsername = game.blackUsername;
+
+            if (game.black === userId) {
+                color = "black";
+                opponentUsername = game.whiteUsername;
+            }
 
             socket.emit("matched", {
                 gameId,
-                color: isWhite ? "white" : "black",
-                username,
-                opponentUsername: isWhite
-                    ? game.blackUsername
-                    : game.whiteUsername
+                color,
+                opponentUsername
             });
+
+            const isCheckmate = game.chess.isCheckmate();
+
+            let winner = null;
+
+            if (isCheckmate) {
+                winner = game.chess.turn() === "w"
+                    ? "black"
+                    : "white";
+            }
 
             socket.emit("gameState", {
                 fen: game.chess.fen(),
                 turn: game.chess.turn(),
-                isGameOver: game.chess.isGameOver()
+                isCheckmate,
+                isDraw: game.chess.isDraw(),
+                isGameOver: game.chess.isGameOver(),
+                winner
             });
+
         }
 
 
-        // 3. Find an opponent
+        // 2. Find opponent
+
         socket.on("findGame", () => {
 
             if (userGame.has(userId)) {
@@ -50,25 +77,37 @@ module.exports = (io) => {
                 return;
             }
 
-            if (pendingPlayer?.id === userId) {
+            if (pendingPlayer && pendingPlayer.id === userId) {
                 socket.emit("waitingForOpponent");
                 return;
             }
 
             // Nobody is waiting
+
             if (!pendingPlayer) {
-                pendingPlayer = { id: userId, username };
+
+                pendingPlayer = {
+                    id: userId,
+                    username: username
+                };
 
                 socket.emit("waitingForOpponent");
+
+                console.log(username, "is waiting");
+
                 return;
             }
 
-            // Create a game with the waiting player
+            // Get waiting player
+
             const opponent = pendingPlayer;
+
+            // Create new chess game
+
             const gameId = crypto.randomUUID();
             const chess = new Chess();
 
-            const game = {
+            const newGame = {
                 chess,
                 white: opponent.id,
                 black: userId,
@@ -76,56 +115,95 @@ module.exports = (io) => {
                 blackUsername: username
             };
 
-            games.set(gameId, game);
+            games.set(gameId, newGame);
 
             userGame.set(opponent.id, gameId);
             userGame.set(userId, gameId);
 
             pendingPlayer = null;
 
-            // Notify both players
+
+            // Notify first player
+
             io.to(`user_${opponent.id}`).emit("matched", {
                 gameId,
                 color: "white",
-                username: opponent.username,
                 opponentUsername: username
             });
+
+
+            // Notify second player
 
             io.to(room).emit("matched", {
                 gameId,
                 color: "black",
-                username,
                 opponentUsername: opponent.username
             });
 
+
             // Send initial board
+
             const state = {
                 fen: chess.fen(),
                 turn: chess.turn(),
-                isGameOver: false
+                isCheckmate: false,
+                isDraw: false,
+                isGameOver: false,
+                winner: null
             };
 
             io.to(`user_${opponent.id}`).emit("gameState", state);
             io.to(room).emit("gameState", state);
 
+            console.log("Game created:", gameId);
+
         });
 
 
-        // 4. Make a chess move
+        // 3. Make chess move
+
         socket.on("gameMove", ({ from, to }, callback) => {
 
-            const game = games.get(userGame.get(userId));
+            const gameId = userGame.get(userId);
+            const game = games.get(gameId);
 
             if (!game) {
-                return callback?.({ valid: false });
+                return callback?.({
+                    valid: false,
+                    reason: "Game not found"
+                });
             }
 
-            const myColor = game.white === userId ? "w" : "b";
+            // Check player
+
+            if (game.white !== userId && game.black !== userId) {
+                return callback?.({
+                    valid: false,
+                    reason: "You are not in this game"
+                });
+            }
+
+            // Check whose turn
+
+            let myColor = "w";
+
+            if (game.black === userId) {
+                myColor = "b";
+            }
 
             if (game.chess.turn() !== myColor) {
                 return callback?.({
                     valid: false,
                     reason: "Not your turn"
+                });
+            }
+
+            // Check game over
+
+            if (game.chess.isGameOver()) {
+                return callback?.({
+                    valid: false,
+                    reason: "Game is over"
                 });
             }
 
@@ -137,54 +215,94 @@ module.exports = (io) => {
                     promotion: "q"
                 });
 
+                const isCheckmate = game.chess.isCheckmate();
+
+                let winner = null;
+
+                if (isCheckmate) {
+                    winner = game.chess.turn() === "w"
+                        ? "black"
+                        : "white";
+                }
+
                 const state = {
                     valid: true,
                     fen: game.chess.fen(),
                     turn: game.chess.turn(),
                     captured: !!move.captured,
                     check: game.chess.inCheck(),
-                    isCheckmate: game.chess.isCheckmate(),
+                    isCheckmate,
                     isDraw: game.chess.isDraw(),
-                    isGameOver: game.chess.isGameOver()
+                    isGameOver: game.chess.isGameOver(),
+                    winner
                 };
 
-                // Update both players
+                // Send updated board to both players
+
                 io.to(`user_${game.white}`).emit("gameState", state);
                 io.to(`user_${game.black}`).emit("gameState", state);
 
                 callback?.(state);
 
             } catch (err) {
-                callback?.({ valid: false });
+
+                callback?.({
+                    valid: false,
+                    reason: "Invalid move"
+                });
+
             }
 
         });
 
 
-        // 5. Get current game state
+        // 4. Get current game
+
         socket.on("getGame", (callback) => {
 
-            const game = games.get(userGame.get(userId));
+            const gameId = userGame.get(userId);
+            const game = games.get(gameId);
 
             if (!game) {
-                return callback?.({ waiting: true });
+                return callback?.({
+                    waiting: true
+                });
+            }
+
+            const isCheckmate = game.chess.isCheckmate();
+
+            let winner = null;
+
+            if (isCheckmate) {
+                winner = game.chess.turn() === "w"
+                    ? "black"
+                    : "white";
             }
 
             callback?.({
                 fen: game.chess.fen(),
                 turn: game.chess.turn(),
-                isGameOver: game.chess.isGameOver()
+                isCheckmate,
+                isDraw: game.chess.isDraw(),
+                isGameOver: game.chess.isGameOver(),
+                winner
             });
 
         });
 
 
-        // 6. Reset game
+        // 5. Reset game
+
         socket.on("resetGame", (callback) => {
 
-            const game = games.get(userGame.get(userId));
+            const gameId = userGame.get(userId);
+            const game = games.get(gameId);
 
             if (!game) {
+                return callback?.({});
+            }
+
+            if (game.white !== userId && game.black !== userId) {
                 return callback?.({});
             }
 
@@ -192,7 +310,11 @@ module.exports = (io) => {
 
             const state = {
                 fen: game.chess.fen(),
-                turn: game.chess.turn()
+                turn: game.chess.turn(),
+                isCheckmate: false,
+                isDraw: false,
+                isGameOver: false,
+                winner: null
             };
 
             io.to(`user_${game.white}`).emit("gameState", state);
@@ -203,38 +325,54 @@ module.exports = (io) => {
         });
 
 
-        // 7. Handle disconnect
+        // 6. Disconnect
+
         socket.on("disconnect", async () => {
 
-            // Check whether another device is still connected
-            const remaining = await io.in(room).fetchSockets();
+            // Check other connected devices
 
-            if (remaining.length > 0) return;
+            const remainingSockets = await io.in(room).fetchSockets();
+
+            if (remainingSockets.length > 0) {
+                return;
+            }
+
+            onlineUsers.delete(userId);
 
             // Remove from waiting queue
-            if (pendingPlayer?.id === userId) {
+
+            if (pendingPlayer && pendingPlayer.id === userId) {
                 pendingPlayer = null;
             }
 
-            // End the current game
+            // Find active game
+
             const gameId = userGame.get(userId);
             const game = games.get(gameId);
 
             if (game) {
 
-                const opponentId =
-                    game.white === userId ? game.black : game.white;
+                let opponentId = game.white;
+
+                if (game.white === userId) {
+                    opponentId = game.black;
+                }
 
                 io.to(`user_${opponentId}`).emit("opponentLeft");
 
                 userGame.delete(userId);
-                userGame.delete(opponentId);
+            userGame.delete(opponentId);
 
                 games.delete(gameId);
+
             }
+
+            console.log(username, "disconnected");
 
         });
 
     });
 
 };
+
+module.exports.onlineUsers = onlineUsers;

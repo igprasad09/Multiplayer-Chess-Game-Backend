@@ -3,6 +3,7 @@ const cors = require("cors");
 const http = require("http");
 const {Server} = require("socket.io");
 const jwt = require("jsonwebtoken");
+const cookieParser = require("cookie-parser");
 
 const authRoutes = require("./src/routes/auth");
 const friendRoutes = require("./src/routes/friends");
@@ -11,13 +12,14 @@ const app = express();
 const httpServer = http.createServer(app);
 const io = new Server(httpServer, {
        cors: {
-              origin: "*",
+              origin: "http://localhost:5173",
               credentials: true
        }
 });
 
 app.set("io", io);
 
+app.use(cookieParser());
 io.use((socket, next)=>{
        const token = socket.handshake.auth?.token;
 
@@ -38,7 +40,6 @@ io.use((socket, next)=>{
 });
 
 require("./src/sockets/gameSockets")(io);
-require("./src/sockets/friendSockets")(io);
 
 app.use(express.json());
 app.use(cors({
