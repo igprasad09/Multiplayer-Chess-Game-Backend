@@ -1,378 +1,157 @@
-
 const { Chess } = require("chess.js");
 const crypto = require("crypto");
 
-const games = new Map();
-const userGame = new Map();
-const onlineUsers = new Map();
+const games = new Map();      // gameId -> { chess, white, black }
+const userGame = new Map();   // userId -> gameId
+const onlineUsers = new Map(); // userId -> socket.id
 
-let pendingPlayer = null;
+let pendingPlayer = null;     // the socket waiting for an opponent
+
+function buildState(chess) {
+  const isCheckmate = chess.isCheckmate();
+  return {
+    fen: chess.fen(),
+    turn: chess.turn(), // "w" or "b"
+    isGameOver: chess.isGameOver(),
+    isDraw: chess.isDraw(),
+    winner: isCheckmate ? (chess.turn() === "w" ? "black" : "white") : null,
+  };
+}
 
 module.exports = (io) => {
+  io.on("connection", (socket) => {
+    const { userId, username } = socket.data;
+    console.log("Socket connected:", socket.id, username);
 
-    io.on("connection", (socket) => {
+    onlineUsers.set(userId, socket.id);
+    socket.join(`user:${userId}`); // for friend requests / messages later
 
-        const userId = String(socket.data.userId);
-        const username = socket.data.username;
+    // ---------- MATCHMAKING ----------
+    socket.on("findMatch", () => {
+      console.log("finding match", username);
 
-        const room = `user_${userId}`;
-
-        // Join personal room
-        socket.join(room);
-
-        onlineUsers.set(userId, username);
-
-        console.log(username, "connected");
-
-
-        // 1. Restore existing game
-
-        const gameId = userGame.get(userId);
-        const game = games.get(gameId);
-
-        if (game) {
-
-            let color = "white";
-            let opponentUsername = game.blackUsername;
-
-            if (game.black === userId) {
-                color = "black";
-                opponentUsername = game.whiteUsername;
-            }
-
-            socket.emit("matched", {
-                gameId,
-                color,
-                opponentUsername
-            });
-
-            const isCheckmate = game.chess.isCheckmate();
-
-            let winner = null;
-
-            if (isCheckmate) {
-                winner = game.chess.turn() === "w"
-                    ? "black"
-                    : "white";
-            }
-
-            socket.emit("gameState", {
-                fen: game.chess.fen(),
-                turn: game.chess.turn(),
-                isCheckmate,
-                isDraw: game.chess.isDraw(),
-                isGameOver: game.chess.isGameOver(),
-                winner
-            });
-
-        }
-
-
-        // 2. Find opponent
-
-        socket.on("findGame", () => {
-
-            if (userGame.has(userId)) {
-                socket.emit("alreadyInGame");
-                return;
-            }
-
-            if (pendingPlayer && pendingPlayer.id === userId) {
-                socket.emit("waitingForOpponent");
-                return;
-            }
-
-            // Nobody is waiting
-
-            if (!pendingPlayer) {
-
-                pendingPlayer = {
-                    id: userId,
-                    username: username
-                };
-
-                socket.emit("waitingForOpponent");
-
-                console.log(username, "is waiting");
-
-                return;
-            }
-
-            // Get waiting player
-
-            const opponent = pendingPlayer;
-
-            // Create new chess game
-
-            const gameId = crypto.randomUUID();
-            const chess = new Chess();
-
-            const newGame = {
-                chess,
-                white: opponent.id,
-                black: userId,
-                whiteUsername: opponent.username,
-                blackUsername: username
-            };
-
-            games.set(gameId, newGame);
-
-            userGame.set(opponent.id, gameId);
-            userGame.set(userId, gameId);
-
-            pendingPlayer = null;
-
-
-            // Notify first player
-
-            io.to(`user_${opponent.id}`).emit("matched", {
-                gameId,
-                color: "white",
-                opponentUsername: username
-            });
-
-
-            // Notify second player
-
-            io.to(room).emit("matched", {
-                gameId,
-                color: "black",
-                opponentUsername: opponent.username
-            });
-
-
-            // Send initial board
-
-            const state = {
-                fen: chess.fen(),
-                turn: chess.turn(),
-                isCheckmate: false,
-                isDraw: false,
-                isGameOver: false,
-                winner: null
-            };
-
-            io.to(`user_${opponent.id}`).emit("gameState", state);
-            io.to(room).emit("gameState", state);
-
-            console.log("Game created:", gameId);
-
+      // already in a game (refresh / StrictMode double emit): resend the info
+      const existingId = userGame.get(userId);
+      if (existingId && games.has(existingId)) {
+        const game = games.get(existingId);
+        const isWhite = game.white.userId === userId;
+        const opponent = isWhite ? game.black : game.white;
+        socket.join(existingId);
+        socket.emit("matched", {
+          gameId: existingId,
+          color: isWhite ? "white" : "black",
+          opponentUsername: opponent.username,
         });
-
-
-        // 3. Make chess move
-
-        socket.on("gameMove", ({ from, to }, callback) => {
-
-            const gameId = userGame.get(userId);
-            const game = games.get(gameId);
-
-            if (!game) {
-                return callback?.({
-                    valid: false,
-                    reason: "Game not found"
-                });
-            }
-
-            // Check player
-
-            if (game.white !== userId && game.black !== userId) {
-                return callback?.({
-                    valid: false,
-                    reason: "You are not in this game"
-                });
-            }
-
-            // Check whose turn
-
-            let myColor = "w";
-
-            if (game.black === userId) {
-                myColor = "b";
-            }
-
-            if (game.chess.turn() !== myColor) {
-                return callback?.({
-                    valid: false,
-                    reason: "Not your turn"
-                });
-            }
-
-            // Check game over
-
-            if (game.chess.isGameOver()) {
-                return callback?.({
-                    valid: false,
-                    reason: "Game is over"
-                });
-            }
-
-            try {
-
-                const move = game.chess.move({
-                    from,
-                    to,
-                    promotion: "q"
-                });
-
-                const isCheckmate = game.chess.isCheckmate();
-
-                let winner = null;
-
-                if (isCheckmate) {
-                    winner = game.chess.turn() === "w"
-                        ? "black"
-                        : "white";
-                }
-
-                const state = {
-                    valid: true,
-                    fen: game.chess.fen(),
-                    turn: game.chess.turn(),
-                    captured: !!move.captured,
-                    check: game.chess.inCheck(),
-                    isCheckmate,
-                    isDraw: game.chess.isDraw(),
-                    isGameOver: game.chess.isGameOver(),
-                    winner
-                };
-
-                // Send updated board to both players
-
-                io.to(`user_${game.white}`).emit("gameState", state);
-                io.to(`user_${game.black}`).emit("gameState", state);
-
-                callback?.(state);
-
-            } catch (err) {
-
-                callback?.({
-                    valid: false,
-                    reason: "Invalid move"
-                });
-
-            }
-
-        });
-
-
-        // 4. Get current game
-
-        socket.on("getGame", (callback) => {
-
-            const gameId = userGame.get(userId);
-            const game = games.get(gameId);
-
-            if (!game) {
-                return callback?.({
-                    waiting: true
-                });
-            }
-
-            const isCheckmate = game.chess.isCheckmate();
-
-            let winner = null;
-
-            if (isCheckmate) {
-                winner = game.chess.turn() === "w"
-                    ? "black"
-                    : "white";
-            }
-
-            callback?.({
-                fen: game.chess.fen(),
-                turn: game.chess.turn(),
-                isCheckmate,
-                isDraw: game.chess.isDraw(),
-                isGameOver: game.chess.isGameOver(),
-                winner
-            });
-
-        });
-
-
-        // 5. Reset game
-
-        socket.on("resetGame", (callback) => {
-
-            const gameId = userGame.get(userId);
-            const game = games.get(gameId);
-
-            if (!game) {
-                return callback?.({});
-            }
-
-            if (game.white !== userId && game.black !== userId) {
-                return callback?.({});
-            }
-
-            game.chess.reset();
-
-            const state = {
-                fen: game.chess.fen(),
-                turn: game.chess.turn(),
-                isCheckmate: false,
-                isDraw: false,
-                isGameOver: false,
-                winner: null
-            };
-
-            io.to(`user_${game.white}`).emit("gameState", state);
-            io.to(`user_${game.black}`).emit("gameState", state);
-
-            callback?.(state);
-
-        });
-
-
-        // 6. Disconnect
-
-        socket.on("disconnect", async () => {
-
-            // Check other connected devices
-
-            const remainingSockets = await io.in(room).fetchSockets();
-
-            if (remainingSockets.length > 0) {
-                return;
-            }
-
-            onlineUsers.delete(userId);
-
-            // Remove from waiting queue
-
-            if (pendingPlayer && pendingPlayer.id === userId) {
-                pendingPlayer = null;
-            }
-
-            // Find active game
-
-            const gameId = userGame.get(userId);
-            const game = games.get(gameId);
-
-            if (game) {
-
-                let opponentId = game.white;
-
-                if (game.white === userId) {
-                    opponentId = game.black;
-                }
-
-                io.to(`user_${opponentId}`).emit("opponentLeft");
-
-                userGame.delete(userId);
-            userGame.delete(opponentId);
-
-                games.delete(gameId);
-
-            }
-
-            console.log(username, "disconnected");
-
-        });
-
+        socket.emit("gameState", buildState(game.chess));
+        return;
+      }
+
+      // drop a stale waiting player
+      if (pendingPlayer && !pendingPlayer.connected) pendingPlayer = null;
+
+      // same player emitted twice
+      if (pendingPlayer && pendingPlayer.data.userId === userId) {
+        pendingPlayer = socket;
+        socket.emit("waitingForOpponent");
+        return;
+      }
+
+      // nobody waiting: wait
+      if (!pendingPlayer) {
+        pendingPlayer = socket;
+        socket.emit("waitingForOpponent");
+        return;
+      }
+
+      // someone is waiting: create the game
+      const opponentSocket = pendingPlayer;
+      pendingPlayer = null;
+
+      const gameId = crypto.randomUUID();
+      const chess = new Chess();
+      const white = {
+        userId: opponentSocket.data.userId,
+        username: opponentSocket.data.username,
+      };
+      const black = { userId, username };
+
+      games.set(gameId, { chess, white, black });
+      userGame.set(white.userId, gameId);
+      userGame.set(black.userId, gameId);
+
+      opponentSocket.join(gameId);
+      socket.join(gameId);
+
+      opponentSocket.emit("matched", {
+        gameId,
+        color: "white",
+        opponentUsername: black.username,
+      });
+      socket.emit("matched", {
+        gameId,
+        color: "black",
+        opponentUsername: white.username,
+      });
+
+      io.to(gameId).emit("gameState", buildState(chess));
     });
 
+    // ---------- MOVES ----------
+    socket.on("gameMove", ({ from, to }, callback) => {
+      const reply = typeof callback === "function" ? callback : () => {};
+
+      const gameId = userGame.get(userId);
+      const game = games.get(gameId);
+      if (!game) return reply({ valid: false, reason: "No active game" });
+
+      const { chess } = game;
+      const myColor = game.white.userId === userId ? "w" : "b";
+      if (chess.turn() !== myColor) {
+        return reply({ valid: false, reason: "Not your turn" });
+      }
+
+      let move;
+      try {
+        move = chess.move({ from, to, promotion: "q" });
+      } catch (e) {
+        return reply({ valid: false, reason: "Illegal move" });
+      }
+
+      const state = buildState(chess);
+
+      reply({
+        valid: true,
+        fen: state.fen,
+        turn: state.turn,
+        isCheckmate: chess.isCheckmate(),
+        check: chess.inCheck(),
+        captured: !!move.captured,
+      });
+
+      io.to(gameId).emit("gameState", state);
+
+      if (state.isGameOver) {
+        userGame.delete(game.white.userId);
+        userGame.delete(game.black.userId);
+        games.delete(gameId);
+      }
+    });
+
+    // ---------- DISCONNECT ----------
+    socket.on("disconnect", () => {
+      if (onlineUsers.get(userId) === socket.id) onlineUsers.delete(userId);
+      if (pendingPlayer && pendingPlayer.id === socket.id) pendingPlayer = null;
+
+      const gameId = userGame.get(userId);
+      const game = games.get(gameId);
+      if (game) {
+        socket.to(gameId).emit("opponentLeft");
+        userGame.delete(game.white.userId);
+        userGame.delete(game.black.userId);
+        games.delete(gameId);
+      }
+    });
+  });
 };
 
 module.exports.onlineUsers = onlineUsers;
