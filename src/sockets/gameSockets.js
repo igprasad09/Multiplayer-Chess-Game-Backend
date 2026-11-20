@@ -18,12 +18,17 @@ function buildState(chess) {
   };
 }
 
+function broadcastOnlineUsers(io){
+  io.emit("onlineUsersUpdate", [...onlineUsers.keys()]);
+}
+
 module.exports = (io) => {
   io.on("connection", (socket) => {
     const { userId, username } = socket.data;
     console.log("Socket connected:", socket.id, username);
 
     onlineUsers.set(userId, socket.id);
+    broadcastOnlineUsers(io);
     socket.join(`user:${userId}`); // for friend requests / messages later
 
     // ---------- MATCHMAKING ----------
@@ -139,7 +144,10 @@ module.exports = (io) => {
 
     // ---------- DISCONNECT ----------
     socket.on("disconnect", () => {
-      if (onlineUsers.get(userId) === socket.id) onlineUsers.delete(userId);
+      if (onlineUsers.get(userId) === socket.id) {
+            onlineUsers.delete(userId);
+            broadcastOnlineUsers(io);
+        }
       if (pendingPlayer && pendingPlayer.id === socket.id) pendingPlayer = null;
 
       const gameId = userGame.get(userId);

@@ -2,6 +2,9 @@ const express = require("express");
 const routes = express();
 const prisma = require("../../lib/prisma");
 
+const {onlineUsers} = require("../sockets/gameSockets");
+const { object } = require("zod");
+
 routes.get("/allusers", async(req, res)=>{
     try{
         const page = Number(req.query.page) || 1;
@@ -44,6 +47,11 @@ routes.get("/allusers", async(req, res)=>{
     }  
 });
 
+routes.get("/onlineusers", (req, res)=>{
+    return res.json({
+        onlineUsers: Object.fromEntries(onlineUsers)
+    })
+})
 
 
 module.exports = routes;
