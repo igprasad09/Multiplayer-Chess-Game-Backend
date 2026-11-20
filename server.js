@@ -9,6 +9,7 @@ const cookieParser = require("cookie-parser");
 const authRoutes = require("./src/routes/auth");
 const friendRoutes = require("./src/routes/friends");
 
+
 const app = express();
 const httpServer = http.createServer(app);
 
@@ -56,6 +57,7 @@ io.use((socket, next) => {
 });
 
 require("./src/sockets/gameSockets")(io);
+require("./src/sockets/friendSockets")(io);
 
 app.use(cookieParser());
 app.use(express.json());
