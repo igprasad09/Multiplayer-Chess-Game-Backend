@@ -13,13 +13,16 @@ enum FriendStatus {
 }
 
 model User {
-    id Int @id @default(autoincrement())
-    username String @unique
-    password String
+    id        Int      @id @default(autoincrement())
+    username  String   @unique
+    password  String
     createdAt DateTime @default(now())
-    
-    sendRequests Friend[] @relation("SendRequests")
+
+    sendRequests     Friend[] @relation("SendRequests")
     receivedRequests Friend[] @relation("ReceivedRequests")
+
+    sentMessages     Message[] @relation("SentMessages")
+    receivedMessages Message[] @relation("ReceivedMessages")
 }
 
 model Friend {
@@ -33,4 +36,18 @@ model Friend {
 
    createdAt  DateTime @default(now())
    @@unique([senderId, receiverId])
+}
+
+model Message {
+    id         Int      @id @default(autoincrement())
+    senderId   Int
+    receiverId Int
+    content    String
+    createdAt  DateTime @default(now())
+
+    sender   User @relation("SentMessages", fields: [senderId], references: [id])
+    receiver User @relation("ReceivedMessages", fields: [receiverId], references: [id])
+
+    @@index([senderId, receiverId])
+    @@index([receiverId, senderId])
 }
