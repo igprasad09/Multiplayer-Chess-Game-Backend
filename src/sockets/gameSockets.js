@@ -5,7 +5,9 @@ const games = new Map();      // gameId -> { chess, white, black }
 const userGame = new Map();   // userId -> gameId
 const onlineUsers = new Map(); // userId -> socket.id
 
-let pendingPlayer = null;     // the socket waiting for an opponent
+let pendingPlayer = null; 
+
+const allPlayingPlayers = new Set();// the socket waiting for an opponent
 
 function buildState(chess) {
   const isCheckmate = chess.isCheckmate();
@@ -22,6 +24,10 @@ function broadcastOnlineUsers(io){
   io.emit("onlineUsersUpdate", [...onlineUsers.keys()]);
 }
 
+function broadcastPlaying(io) {
+  io.emit("playingPlayerList", [...allPlayingPlayers]);
+}
+
 module.exports = (io) => {
   io.on("connection", (socket) => {
     const { userId, username } = socket.data;
@@ -31,9 +37,16 @@ module.exports = (io) => {
     broadcastOnlineUsers(io);
     socket.join(`user:${userId}`); // for friend requests / messages later
 
+    socket.on("getPlayingPlayers", () => {
+      socket.emit("playingPlayerList", [...allPlayingPlayers]);
+    });
     // ---------- MATCHMAKING ----------
     socket.on("findMatch", () => {
       console.log("finding match", username);
+
+      allPlayingPlayers.add(userId);
+      broadcastPlaying(io);
+
 
       // already in a game (refresh / StrictMode double emit): resend the info
       const existingId = userGame.get(userId);
@@ -136,9 +149,12 @@ module.exports = (io) => {
       io.to(gameId).emit("gameState", state);
 
       if (state.isGameOver) {
+        allPlayingPlayers.delete(game.white.userId);
+        allPlayingPlayers.delete(game.black.userId);
         userGame.delete(game.white.userId);
         userGame.delete(game.black.userId);
         games.delete(gameId);
+        broadcastPlaying(io);
       }
     });
 
@@ -154,10 +170,14 @@ module.exports = (io) => {
       const game = games.get(gameId);
       if (game) {
         socket.to(gameId).emit("opponentLeft");
+        allPlayingPlayers.delete(game.white.userId);
+        allPlayingPlayers.delete(game.black.userId);
         userGame.delete(game.white.userId);
         userGame.delete(game.black.userId);
         games.delete(gameId);
       }
+      allPlayingPlayers.delete(userId);
+      broadcastPlaying(io);
     });
   });
 };
