@@ -17,6 +17,7 @@ function buildState(chess) {
     isGameOver: chess.isGameOver(),
     isDraw: chess.isDraw(),
     winner: isCheckmate ? (chess.turn() === "w" ? "black" : "white") : null,
+    moves: chess.history({verbose: true}),
   };
 }
 
@@ -46,7 +47,6 @@ module.exports = (io) => {
 
       allPlayingPlayers.add(userId);
       broadcastPlaying(io);
-
 
       // already in a game (refresh / StrictMode double emit): resend the info
       const existingId = userGame.get(userId);
