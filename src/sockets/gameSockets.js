@@ -59,6 +59,7 @@ module.exports = (io) => {
           gameId: existingId,
           color: isWhite ? "white" : "black",
           opponentUsername: opponent.username,
+          opponentUserId: opponent.userId
         });
         socket.emit("gameState", buildState(game.chess));
         return;
@@ -104,11 +105,13 @@ module.exports = (io) => {
         gameId,
         color: "white",
         opponentUsername: black.username,
+        opponentUserId: black.userId,
       });
       socket.emit("matched", {
         gameId,
         color: "black",
         opponentUsername: white.username,
+        opponentUserId: white.userId,
       });
 
       io.to(gameId).emit("gameState", buildState(chess));
