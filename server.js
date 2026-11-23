@@ -59,6 +59,7 @@ io.use((socket, next) => {
 require("./src/sockets/gameSockets")(io);
 require("./src/sockets/friendSockets")(io);
 require("./src/sockets/messagesSocket")(io);
+require("./src/sockets/liveChatSocket")(io);
 
 app.use(cookieParser());
 app.use(express.json());
