@@ -1,13 +1,13 @@
 const { Chess } = require("chess.js");
 const crypto = require("crypto");
 
-const games = new Map();      // gameId -> { chess, white, black }
-const userGame = new Map();   // userId -> gameId
+const games = new Map();       // gameId -> { chess, white, black }
+const userGame = new Map();    // userId -> gameId
 const onlineUsers = new Map(); // userId -> socket.id
 
-let pendingPlayer = null; 
+let pendingPlayer = null;
 
-const allPlayingPlayers = new Set();// the socket waiting for an opponent
+const allPlayingPlayers = new Set(); // the socket waiting for an opponent
 
 function buildState(chess) {
   const isCheckmate = chess.isCheckmate();
@@ -17,11 +17,11 @@ function buildState(chess) {
     isGameOver: chess.isGameOver(),
     isDraw: chess.isDraw(),
     winner: isCheckmate ? (chess.turn() === "w" ? "black" : "white") : null,
-    moves: chess.history({verbose: true}),
+    moves: chess.history({ verbose: true }),
   };
 }
 
-function broadcastOnlineUsers(io){
+function broadcastOnlineUsers(io) {
   io.emit("onlineUsersUpdate", [...onlineUsers.keys()]);
 }
 
@@ -38,9 +38,19 @@ module.exports = (io) => {
     broadcastOnlineUsers(io);
     socket.join(`user:${userId}`); // for friend requests / messages later
 
+    // If this user is already in a game (reconnect / refresh),
+    // put the new socket back into the game room and resend the board.
+    const activeGameId = userGame.get(userId);
+    const activeGame = games.get(activeGameId);
+    if (activeGame) {
+      socket.join(activeGameId);
+      socket.emit("gameState", buildState(activeGame.chess));
+    }
+
     socket.on("getPlayingPlayers", () => {
       socket.emit("playingPlayerList", [...allPlayingPlayers]);
     });
+
     // ---------- MATCHMAKING ----------
     socket.on("findMatch", () => {
       console.log("finding match", username);
@@ -59,7 +69,7 @@ module.exports = (io) => {
           gameId: existingId,
           color: isWhite ? "white" : "black",
           opponentUsername: opponent.username,
-          opponentUserId: opponent.userId
+          opponentUserId: opponent.userId,
         });
         socket.emit("gameState", buildState(game.chess));
         return;
@@ -162,17 +172,25 @@ module.exports = (io) => {
     });
 
     // ---------- DISCONNECT ----------
-    socket.on("disconnect", () => {
-      if (onlineUsers.get(userId) === socket.id) {
-            onlineUsers.delete(userId);
-            broadcastOnlineUsers(io);
-        }
+    socket.on("disconnect", (reason) => {
+      console.log("Socket disconnected:", socket.id, username, reason);
+
+      const wasCurrent = onlineUsers.get(userId) === socket.id;
+      if (wasCurrent) {
+        onlineUsers.delete(userId);
+        broadcastOnlineUsers(io);
+      }
+
       if (pendingPlayer && pendingPlayer.id === socket.id) pendingPlayer = null;
+
+      // THE FIX: this is an old socket and the player is already connected
+      // on a newer one (reconnect / refresh). Don't touch their game.
+      if (!wasCurrent && onlineUsers.has(userId)) return;
 
       const gameId = userGame.get(userId);
       const game = games.get(gameId);
       if (game) {
-        socket.to(gameId).emit("opponentLeft");
+        io.to(gameId).emit("opponentLeft");
         allPlayingPlayers.delete(game.white.userId);
         allPlayingPlayers.delete(game.black.userId);
         userGame.delete(game.white.userId);
