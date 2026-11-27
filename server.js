@@ -1,4 +1,3 @@
-
 require("dotenv").config();
 
 const express = require("express");
@@ -34,6 +33,8 @@ const corsOptions = {
 app.use(cors(corsOptions));
 
 const io = new Server(httpServer, {
+  addTrailingSlash: false, // FIX: client requests /socket.io (no trailing slash)
+  transports: ["polling"], // matches the client
   cors: corsOptions,
 });
 
@@ -64,9 +65,7 @@ function parseCookies(header = "") {
 // Socket JWT authentication
 io.use((socket, next) => {
   try {
-    const cookies = parseCookies(
-      socket.handshake.headers.cookie || ""
-    );
+    const cookies = parseCookies(socket.handshake.headers.cookie || "");
 
     const token = cookies.token;
 
@@ -107,7 +106,7 @@ app.get("/", (req, res) => {
 });
 
 // AppSail port, fallback for local Docker
-const PORT = process.env.X_ZOHO_CATALYST_LISTEN_PORT || 9000;
+const PORT = process.env.X_ZOHO_CATALYST_LISTEN_PORT || 3000;
 
 httpServer.listen(PORT, "0.0.0.0", () => {
   console.log(`Server running on port ${PORT}`);
